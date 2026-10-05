@@ -5,6 +5,7 @@ import { config } from '../config';
 export interface AuthUser {
   id: string;
   name: string;
+  displayName?: string;
   email: string;
 }
 
@@ -40,6 +41,7 @@ export const authenticate = (req: Request, res: Response, next: NextFunction): v
     req.user = {
       id: decoded.id,
       name: decoded.name,
+      displayName: decoded.displayName?.trim() || decoded.email.split('@', 1)[0] || 'User',
       email: decoded.email
     };
     next();

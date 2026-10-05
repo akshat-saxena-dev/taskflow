@@ -1,15 +1,20 @@
 import React, { useState } from 'react';
 import { useAuth } from '../context/useAuth';
+import { createRegisterPayload, passwordsMatch, validateDisplayName } from '../utils/profile';
 
 interface AuthPageProps {
+  initialMode?: 'login' | 'register';
   onSuccess?: () => void;
 }
 
-export const AuthPage: React.FC<AuthPageProps> = ({ onSuccess }) => {
-  const [mode, setMode] = useState<'login' | 'register'>('login');
-  const [name, setName] = useState('');
+export const AuthPage: React.FC<AuthPageProps> = ({ initialMode = 'login', onSuccess }) => {
+  const [mode, setMode] = useState<'login' | 'register'>(initialMode);
+  const [displayName, setDisplayName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [confirmTouched, setConfirmTouched] = useState(false);
+  const [displayNameError, setDisplayNameError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
 
@@ -18,12 +23,15 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onSuccess }) => {
   const handleToggleMode = (newMode: 'login' | 'register') => {
     setMode(newMode);
     setLocalError(null);
+    setDisplayNameError(null);
+    setConfirmTouched(false);
     clearError();
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLocalError(null);
+    setDisplayNameError(null);
     clearError();
 
     // Basic client-side validation
@@ -33,12 +41,17 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onSuccess }) => {
     }
 
     if (mode === 'register') {
-      if (!name.trim()) {
-        setLocalError('Please enter your full name.');
+      const displayNameValidationError = validateDisplayName(displayName);
+      if (displayNameValidationError) {
+        setDisplayNameError(displayNameValidationError);
         return;
       }
       if (password.length < 8) {
         setLocalError('Password must be at least 8 characters long.');
+        return;
+      }
+      if (!passwordsMatch(password, confirmPassword)) {
+        setConfirmTouched(true);
         return;
       }
     }
@@ -48,7 +61,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onSuccess }) => {
       if (mode === 'login') {
         await login({ email: email.trim(), password });
       } else {
-        await register({ name: name.trim(), email: email.trim(), password });
+        await register(createRegisterPayload(displayName, email, password));
       }
       if (onSuccess) {
         onSuccess();
@@ -66,10 +79,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onSuccess }) => {
     <div className="tf-auth-container">
       <div className="tf-auth-card">
         <div className="tf-auth-header">
-          <div className="tf-brand" style={{ justifyContent: 'center', marginBottom: '12px' }}>
-            <span className="tf-logo-icon">⚡</span>
-            <span className="tf-logo-text" style={{ fontSize: '20px' }}>TaskFlow</span>
-          </div>
+          <span className="tf-auth-kicker">{mode === 'login' ? 'OPERATOR ACCESS' : 'GET STARTED'}</span>
           <h1 className="tf-auth-title">
             {mode === 'login' ? 'Sign in to TaskFlow' : 'Create an account'}
           </h1>
@@ -82,7 +92,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onSuccess }) => {
 
         {displayError && (
           <div className="tf-auth-error-banner" role="alert">
-            <span className="tf-auth-error-icon">⚠️</span>
+            <span className="tf-auth-error-icon" aria-hidden="true">!</span>
             <span>{displayError}</span>
           </div>
         )}
@@ -90,31 +100,35 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onSuccess }) => {
         <form onSubmit={handleSubmit} className="tf-auth-form">
           {mode === 'register' && (
             <div className="tf-form-group">
-              <label htmlFor="auth-name" className="tf-form-label">
-                Full Name
+              <label htmlFor="auth-display-name" className="tf-form-label">
+                Display Name
               </label>
               <input
-                id="auth-name"
+                id="auth-display-name"
                 type="text"
                 className="tf-input"
-                placeholder="Jane Doe"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
+                placeholder="Saran"
+                value={displayName}
+                onChange={(e) => { setDisplayName(e.target.value); setDisplayNameError(null); }}
                 disabled={submitting}
                 autoFocus
+                autoComplete="nickname"
+                aria-invalid={displayNameError ? 'true' : undefined}
+                aria-describedby={displayNameError ? 'auth-display-name-error' : undefined}
                 required
               />
+              {displayNameError && <span id="auth-display-name-error" className="tf-field-error" role="alert">{displayNameError}</span>}
             </div>
           )}
 
           <div className="tf-form-group">
             <label htmlFor="auth-email" className="tf-form-label">
-              Email Address
+                {mode === 'register' ? 'Email' : 'Email Address'}
             </label>
             <input
               id="auth-email"
               type="email"
-              className="tf-input"
+              className="tf-input tf-control"
               placeholder="operator@taskflow.dev"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
@@ -132,7 +146,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onSuccess }) => {
             <input
               id="auth-password"
               type="password"
-              className="tf-input"
+              className="tf-input tf-control"
               placeholder="••••••••"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
@@ -144,6 +158,27 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onSuccess }) => {
               <span className="tf-form-help">Must be at least 8 characters.</span>
             )}
           </div>
+
+          {mode === 'register' && (
+            <div className="tf-form-group">
+              <label htmlFor="auth-confirm-password" className="tf-form-label">Confirm Password</label>
+              <input
+                id="auth-confirm-password"
+                type="password"
+                className="tf-input tf-control"
+                placeholder="Re-enter your password"
+                value={confirmPassword}
+                onChange={(e) => { setConfirmPassword(e.target.value); setConfirmTouched(true); }}
+                onBlur={() => setConfirmTouched(true)}
+                disabled={submitting}
+                autoComplete="new-password"
+                aria-invalid={confirmTouched && !passwordsMatch(password, confirmPassword) ? 'true' : undefined}
+                aria-describedby={confirmTouched && !passwordsMatch(password, confirmPassword) ? 'auth-confirm-password-error' : undefined}
+                required
+              />
+              {confirmTouched && !passwordsMatch(password, confirmPassword) && <span id="auth-confirm-password-error" className="tf-field-error" role="alert">Passwords do not match.</span>}
+            </div>
+          )}
 
           <button
             type="submit"
@@ -157,7 +192,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onSuccess }) => {
                 : 'Creating account...'
               : mode === 'login'
               ? 'Sign In'
-              : 'Register Account'}
+              : 'Create account'}
           </button>
         </form>
 

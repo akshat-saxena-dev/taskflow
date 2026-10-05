@@ -5,35 +5,48 @@ import { JobsPage } from './pages/JobsPage';
 import { JobDetailsPage } from './pages/JobDetailsPage';
 import { QueueStatsPage } from './pages/QueueStatsPage';
 import { AuthPage } from './pages/AuthPage';
+import { LandingPage } from './pages/LandingPage';
 import { AuthProvider } from './context/AuthProvider';
 import { useAuth } from './context/useAuth';
 import { LoadingState } from './components/LoadingState';
 
 const MainLayout: React.FC = () => {
   const { user, loading, logout } = useAuth();
-  const [currentPage, setCurrentPage] = useState<NavPage>('dashboard');
+  const [currentPage, setCurrentPage] = useState<NavPage>('landing');
   const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
   const [previousPage, setPreviousPage] = useState<NavPage>('dashboard');
 
-  // Sync hash routing on initial load and hashchange
+  // Resolve the existing hash routes after session lookup, with a public root
+  // experience for signed-out visitors.
   useEffect(() => {
     const handleHashChange = () => {
       const hash = window.location.hash.replace(/^#\/?/, '');
       if (hash.startsWith('jobs/')) {
+        if (!user) {
+          setCurrentPage('landing');
+          setSelectedJobId(null);
+          return;
+        }
         const id = hash.replace('jobs/', '');
         setSelectedJobId(id);
         setCurrentPage('job-details');
       } else if (hash === 'jobs') {
-        setCurrentPage('jobs');
+        setCurrentPage(user ? 'jobs' : 'landing');
         setSelectedJobId(null);
       } else if (hash === 'queue-stats') {
-        setCurrentPage('queue-stats');
+        setCurrentPage(user ? 'queue-stats' : 'landing');
         setSelectedJobId(null);
-      } else if (hash === 'auth') {
+      } else if (hash === 'auth' || hash === 'login') {
         setCurrentPage('auth');
         setSelectedJobId(null);
+      } else if (hash === 'signup' || hash === 'register') {
+        setCurrentPage('register');
+        setSelectedJobId(null);
+      } else if (hash === 'dashboard') {
+        setCurrentPage(user ? 'dashboard' : 'landing');
+        setSelectedJobId(null);
       } else {
-        setCurrentPage('dashboard');
+        setCurrentPage(user ? 'dashboard' : 'landing');
         setSelectedJobId(null);
       }
     };
@@ -41,14 +54,17 @@ const MainLayout: React.FC = () => {
     handleHashChange();
     window.addEventListener('hashchange', handleHashChange);
     return () => window.removeEventListener('hashchange', handleHashChange);
-  }, []);
+  }, [user]);
 
   const navigateTo = (page: NavPage) => {
     if (page === currentPage) return;
     setPreviousPage(currentPage === 'job-details' ? previousPage : currentPage);
     setCurrentPage(page);
 
-    if (page === 'dashboard') {
+    if (page === 'landing') {
+      window.location.hash = '#/';
+      setSelectedJobId(null);
+    } else if (page === 'dashboard') {
       window.location.hash = '#/dashboard';
       setSelectedJobId(null);
     } else if (page === 'jobs') {
@@ -59,6 +75,9 @@ const MainLayout: React.FC = () => {
       setSelectedJobId(null);
     } else if (page === 'auth') {
       window.location.hash = '#/auth';
+      setSelectedJobId(null);
+    } else if (page === 'register') {
+      window.location.hash = '#/signup';
       setSelectedJobId(null);
     }
   };
@@ -88,21 +107,22 @@ const MainLayout: React.FC = () => {
     );
   }
 
-  // If unauthenticated, redirect protected views to AuthPage
-  const isAuthView = currentPage === 'auth' || !user;
+  const isAuthView = currentPage === 'auth' || currentPage === 'register';
+  const isLandingView = !user && !isAuthView;
 
   return (
     <div>
       <Navigation
-        activePage={isAuthView ? 'auth' : currentPage}
+        activePage={currentPage}
         onNavigate={navigateTo}
-        selectedJobId={selectedJobId}
         user={user}
         onLogout={handleLogout}
       />
       <main className="tf-main-content">
-        {isAuthView ? (
-          <AuthPage onSuccess={() => navigateTo('dashboard')} />
+        {isLandingView ? (
+          <LandingPage onLogin={() => navigateTo('auth')} onRegister={() => navigateTo('register')} />
+        ) : isAuthView ? (
+          <AuthPage initialMode={currentPage === 'register' ? 'register' : 'login'} onSuccess={() => navigateTo('dashboard')} />
         ) : (
           <>
             {currentPage === 'dashboard' && (

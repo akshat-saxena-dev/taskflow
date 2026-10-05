@@ -9,6 +9,7 @@ import * as dbModule from '../src/db';
 interface MockUser {
   id: string;
   name: string;
+  display_name: string | null;
   email: string;
   password_hash: string;
   created_at: Date;
@@ -23,7 +24,7 @@ let mockUsers: MockUser[] = [];
 
   // 1. SELECT by email
   if (queryStr.includes('SELECT id FROM users WHERE LOWER(email) = LOWER($1)') ||
-      queryStr.includes('SELECT id, name, email, password_hash, created_at FROM users WHERE LOWER(email) = LOWER($1)')) {
+      queryStr.includes('SELECT id, name, display_name, email, password_hash, created_at FROM users WHERE LOWER(email) = LOWER($1)')) {
     const emailToFind = String(params[0]).toLowerCase();
     const user = mockUsers.find((u) => u.email.toLowerCase() === emailToFind);
     return {
@@ -37,7 +38,7 @@ let mockUsers: MockUser[] = [];
 
   // 2. INSERT user
   if (queryStr.includes('INSERT INTO users')) {
-    const [name, email, passwordHash] = params as [string, string, string];
+    const [name, display_name, email, passwordHash] = params as [string, string, string, string];
     // Check duplicate
     if (mockUsers.some((u) => u.email.toLowerCase() === email.toLowerCase())) {
       const err = new Error('duplicate key value violates unique constraint "users_email_key"');
@@ -47,6 +48,7 @@ let mockUsers: MockUser[] = [];
     const newUser: MockUser = {
       id: `usr_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
       name,
+      display_name,
       email,
       password_hash: passwordHash,
       created_at: new Date(),
@@ -63,7 +65,7 @@ let mockUsers: MockUser[] = [];
   }
 
   // 3. SELECT by id (me endpoint)
-  if (queryStr.includes('SELECT id, name, email, created_at FROM users WHERE id = $1')) {
+  if (queryStr.includes('SELECT id, name, display_name, email, created_at FROM users WHERE id = $1')) {
     const idToFind = String(params[0]);
     const user = mockUsers.find((u) => u.id === idToFind);
     return {
@@ -86,6 +88,7 @@ describe('TaskFlow Authentication API Tests', () => {
     mockUsers.push({
       id: 'usr_seeded_test',
       name: 'Existing Operator',
+      display_name: null,
       email: 'operator@example.com',
       password_hash: passwordHash,
       created_at: new Date(),
@@ -101,18 +104,18 @@ describe('TaskFlow Authentication API Tests', () => {
   });
 
   describe('POST /api/auth/register', () => {
-    test('rejects registration with short name', async () => {
+    test('rejects registration with short legacy name', async () => {
       const res = await request(app)
         .post('/api/auth/register')
         .send({ name: 'A', email: 'valid@example.com', password: 'Password123' });
       assert.equal(res.status, 400);
-      assert.match(res.body.error, /Name must be at least 2 characters/);
+      assert.match(res.body.error, /at least 2 characters/);
     });
 
     test('rejects registration with invalid email', async () => {
       const res = await request(app)
         .post('/api/auth/register')
-        .send({ name: 'Jane Doe', email: 'invalid-email-format', password: 'Password123' });
+        .send({ displayName: 'Jane Doe', email: 'invalid-email-format', password: 'Password123' });
       assert.equal(res.status, 400);
       assert.match(res.body.error, /valid email address/);
     });
@@ -120,7 +123,7 @@ describe('TaskFlow Authentication API Tests', () => {
     test('rejects registration with password under 8 characters', async () => {
       const res = await request(app)
         .post('/api/auth/register')
-        .send({ name: 'Jane Doe', email: 'valid@example.com', password: 'short' });
+        .send({ displayName: 'Jane Doe', email: 'valid@example.com', password: 'short' });
       assert.equal(res.status, 400);
       assert.match(res.body.error, /at least 8 characters/);
     });
@@ -128,12 +131,15 @@ describe('TaskFlow Authentication API Tests', () => {
     test('registers a new user successfully and sets HTTP-only cookie', async () => {
       const res = await request(app)
         .post('/api/auth/register')
-        .send({ name: 'Alice Smith', email: 'alice@example.com', password: 'MySecretPassword123!' });
+        .send({ displayName: '  Alice Smith  ', email: 'alice@example.com', password: 'MySecretPassword123!', confirmPassword: 'not stored' });
 
       assert.equal(res.status, 201);
       assert.equal(res.body.user.name, 'Alice Smith');
+      assert.equal(res.body.user.displayName, 'Alice Smith');
       assert.equal(res.body.user.email, 'alice@example.com');
       assert.equal(res.body.user.password_hash, undefined); // Never return password hash!
+      assert.equal(res.body.user.confirmPassword, undefined);
+      assert.equal(mockUsers.find((user) => user.email === 'alice@example.com')?.display_name, 'Alice Smith');
       assert.ok(res.body.user.id);
 
       // Verify Set-Cookie header is present
@@ -142,6 +148,23 @@ describe('TaskFlow Authentication API Tests', () => {
       const tokenCookie = (Array.isArray(cookies) ? cookies : [cookies]).find((c: string) => c.startsWith('token='));
       assert.ok(tokenCookie, 'Expected token cookie');
       assert.match(tokenCookie, /HttpOnly/i);
+    });
+
+    test('rejects missing, blank, and overlong display names', async () => {
+      const missing = await request(app).post('/api/auth/register').send({ email: 'missing@example.com', password: 'Password123' });
+      const blank = await request(app).post('/api/auth/register').send({ displayName: '  ', email: 'blank@example.com', password: 'Password123' });
+      const long = await request(app).post('/api/auth/register').send({ displayName: 'x'.repeat(51), email: 'long@example.com', password: 'Password123' });
+      assert.equal(missing.status, 400);
+      assert.equal(blank.status, 400);
+      assert.equal(long.status, 400);
+      assert.match(missing.body.error, /Display name is required/);
+      assert.match(long.body.error, /50 characters or fewer/);
+    });
+
+    test('accepts a one-character display name', async () => {
+      const res = await request(app).post('/api/auth/register').send({ displayName: 'S', email: 's@example.com', password: 'Password123' });
+      assert.equal(res.status, 201);
+      assert.equal(res.body.user.displayName, 'S');
     });
 
     test('returns 409 conflict when registering with duplicate email', async () => {
@@ -186,6 +209,7 @@ describe('TaskFlow Authentication API Tests', () => {
       assert.equal(res.status, 200);
       assert.equal(res.body.user.email, 'operator@example.com');
       assert.equal(res.body.user.name, 'Existing Operator');
+      assert.equal(res.body.user.displayName, 'operator');
 
       const cookies = res.headers['set-cookie'];
       assert.ok(cookies);
@@ -218,6 +242,7 @@ describe('TaskFlow Authentication API Tests', () => {
       assert.equal(meRes.status, 200);
       assert.equal(meRes.body.user.email, 'operator@example.com');
       assert.equal(meRes.body.user.name, 'Existing Operator');
+      assert.equal(meRes.body.user.displayName, 'operator');
       assert.equal(meRes.body.user.password_hash, undefined);
     });
   });

@@ -47,7 +47,7 @@ const createAuthCookie = (user: { id: string; name: string; email: string }) => 
   const queryStr = text.trim();
 
   // 1. SELECT user by id (auth/me)
-  if (queryStr.includes('SELECT id, name, email, created_at FROM users WHERE id = $1')) {
+  if (queryStr.includes('SELECT id, name, display_name, email, created_at FROM users WHERE id = $1')) {
     const idToFind = String(params[0]);
     const user = mockUsers.find((u) => u.id === idToFind);
     return { rows: user ? [user] : [], command: 'SELECT', rowCount: user ? 1 : 0, oid: 0, fields: [] };

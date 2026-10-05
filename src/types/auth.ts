@@ -1,6 +1,7 @@
 export interface User {
   id: string;
   name: string;
+  displayName?: string | null;
   email: string;
   createdAt?: string;
 }
@@ -11,7 +12,7 @@ export interface AuthResponse {
 }
 
 export interface RegisterPayload {
-  name: string;
+  displayName: string;
   email: string;
   password: string;
 }

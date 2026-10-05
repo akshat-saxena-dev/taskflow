@@ -1,224 +1,105 @@
-import { useEffect, useState } from 'react';
-import type { QueueStatsResponse } from '../types/job';
-import { api } from '../services/api';
+import { useCallback, useEffect, useState } from 'react';
+import { api, type OperationalMetrics } from '../services/api';
 import { LoadingState } from '../components/LoadingState';
 import { ErrorState } from '../components/ErrorState';
 
+const count = (value?: number) => (value ?? 0).toLocaleString();
+
 export const QueueStatsPage: React.FC = () => {
-  const [stats, setStats] = useState<QueueStatsResponse | null>(null);
-  const [loading, setLoading] = useState<boolean>(true);
+  const [stats, setStats] = useState<OperationalMetrics | null>(null);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const loadStats = async () => {
+  const loadStats = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
-      const data = await api.getQueueStats();
-      setStats(data);
+      setStats(await api.getOperationalMetrics());
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Failed to fetch queue statistics');
+      setError(err instanceof Error ? err.message : 'Failed to fetch operational metrics');
     } finally {
       setLoading(false);
     }
-  };
-
-  useEffect(() => {
-    let isMounted = true;
-    const run = async () => {
-      try {
-        setLoading(true);
-        setError(null);
-        const data = await api.getQueueStats();
-        if (isMounted) {
-          setStats(data);
-        }
-      } catch (err: unknown) {
-        if (isMounted) {
-          setError(err instanceof Error ? err.message : 'Failed to fetch queue statistics');
-        }
-      } finally {
-        if (isMounted) {
-          setLoading(false);
-        }
-      }
-    };
-
-    void run();
-
-    return () => {
-      isMounted = false;
-    };
   }, []);
 
-  if (loading) {
-    return <LoadingState message="Loading queue and worker telemetry..." />;
-  }
+  useEffect(() => {
+    let mounted = true;
+    const fetchStats = async () => {
+      try {
+        const data = await api.getOperationalMetrics();
+        if (mounted) setStats(data);
+      } catch (err: unknown) {
+        if (mounted) setError(err instanceof Error ? err.message : 'Failed to fetch operational metrics');
+      } finally {
+        if (mounted) setLoading(false);
+      }
+    };
+    void fetchStats();
+    return () => { mounted = false; };
+  }, []);
 
-  if (error) {
-    return <ErrorState message={error} onRetry={loadStats} />;
-  }
-
+  if (loading) return <LoadingState message="Loading queue and worker telemetry…" />;
+  if (error) return <ErrorState message={error} onRetry={() => { void loadStats(); }} />;
   if (!stats) return null;
 
-  const totalWaiting = stats.queues.reduce((acc, q) => acc + q.waiting, 0);
-  const totalActive = stats.queues.reduce((acc, q) => acc + q.active, 0);
+  const queueItems = [
+    ['Waiting', stats.queue.waiting], ['Active', stats.queue.active], ['Delayed', stats.queue.delayed],
+    ['Completed', stats.queue.completed], ['Failed', stats.queue.failed]
+  ];
+  const pressurePercent = stats.pressure && stats.pressure.maxPending > 0
+    ? Math.min(100, Math.round((stats.pressure.pending / stats.pressure.maxPending) * 100)) : null;
 
   return (
     <div className="tf-page">
-      <div className="tf-page-header">
+      <header className="tf-page-header">
         <div>
-          <h1 className="tf-page-title">Queue & Worker Stats</h1>
-          <p className="tf-page-subtitle">Telemetry for BullMQ queues, worker pools, and throughput</p>
+          <span className="tf-overline">TASKFLOW / TELEMETRY</span>
+          <h1 className="tf-page-title">Queue &amp; worker stats</h1>
+          <p className="tf-page-subtitle">Live queue, worker, outbox, and recovery metrics from this TaskFlow deployment.</p>
         </div>
-        <button className="tf-btn-secondary" onClick={loadStats}>
-          Refresh
-        </button>
-      </div>
+        <div className="tf-page-header-actions">
+          <span className="tf-muted-text">Observed {new Date(stats.observedAt).toLocaleTimeString()}</span>
+          <button type="button" className="tf-btn-secondary" onClick={() => { void loadStats(); }} disabled={loading}>Refresh</button>
+        </div>
+      </header>
 
-      {/* Top Overview Cards */}
-      <div className="tf-stats-grid">
-        <div className="tf-stat-card">
-          <span className="tf-stat-label">Total Queues</span>
-          <span className="tf-stat-value">{stats.queues.length}</span>
+      <section className="tf-card tf-queue-overview" aria-labelledby="queue-state-title">
+        <div className="tf-card-header">
+          <div><span className="tf-overline">BULLMQ</span><h2 className="tf-card-title" id="queue-state-title">Queue state</h2></div>
+          <span className={`tf-health-pill ${!stats.pressure ? 'is-neutral' : stats.pressure.overloaded ? 'is-unavailable' : 'is-available'}`}><span />{!stats.pressure ? 'Pressure unavailable' : stats.pressure.overloaded ? 'Backpressure active' : 'Accepting work'}</span>
         </div>
-        <div className="tf-stat-card">
-          <span className="tf-stat-label">Connected Workers</span>
-          <span className="tf-stat-value">{stats.workers.length}</span>
+        <div className="tf-stats-grid">
+          {queueItems.map(([label, value]) => <article className="tf-stat-card" key={label as string}><span className="tf-stat-label">{label}</span><strong className="tf-stat-value">{Number(value).toLocaleString()}</strong></article>)}
         </div>
-        <div className="tf-stat-card">
-          <span className="tf-stat-label">Total Backlog (Depth)</span>
-          <span className="tf-stat-value">{totalWaiting}</span>
-        </div>
-        <div className="tf-stat-card tf-stat-active">
-          <span className="tf-stat-label">Jobs in Flight</span>
-          <span className="tf-stat-value">{totalActive}</span>
-        </div>
-        <div className="tf-stat-card tf-stat-completed">
-          <span className="tf-stat-label">Throughput / min</span>
-          <span className="tf-stat-value">{stats.totalThroughput}</span>
-        </div>
-      </div>
+        {stats.pressure && <div className="tf-pressure-summary">
+          <div className="tf-queue-metric-row"><span>Pending against configured limit</span><strong>{count(stats.pressure.pending)} / {count(stats.pressure.maxPending)}</strong></div>
+          <div className="tf-pressure-track" role="progressbar" aria-label="Pending queue capacity" aria-valuemin={0} aria-valuemax={100} aria-valuenow={pressurePercent ?? 0}><span style={{ width: `${pressurePercent ?? 0}%` }} /></div>
+          <p className="tf-muted-text">Waiting {count(stats.pressure.waiting)} · Rate limited {count(stats.submissionRejections?.rateLimited)} · Backpressure rejections {count(stats.submissionRejections?.backpressure)}</p>
+        </div>}
+      </section>
 
-      {/* Queues Table */}
-      <div className="tf-card" style={{ marginTop: '24px' }}>
-        <h2 className="tf-card-title">Queue Metrics</h2>
-        <div className="tf-table-wrapper">
-          <table className="tf-table">
-            <thead>
-              <tr>
-                <th>Queue Name</th>
-                <th>Backlog (Waiting)</th>
-                <th>Active</th>
-                <th>Completed</th>
-                <th>Failed</th>
-                <th>Delayed</th>
-                <th>Throughput</th>
-                <th>Avg Latency</th>
-              </tr>
-            </thead>
-            <tbody>
-              {stats.queues.map((q) => (
-                <tr key={q.name}>
-                  <td>
-                    <strong>{q.name}</strong>
-                  </td>
-                  <td>
-                    <span className="tf-mono-tag">{q.waiting}</span>
-                  </td>
-                  <td>
-                    <span style={{ color: '#2563eb', fontWeight: 600 }}>{q.active}</span>
-                  </td>
-                  <td className="tf-muted-text">{q.completed.toLocaleString()}</td>
-                  <td>
-                    {q.failed > 0 ? (
-                      <span style={{ color: '#dc2626', fontWeight: 600 }}>{q.failed}</span>
-                    ) : (
-                      <span className="tf-muted-text">0</span>
-                    )}
-                  </td>
-                  <td className="tf-muted-text">{q.delayed}</td>
-                  <td>{q.throughputPerMinute} / min</td>
-                  <td>{(q.avgDurationMs / 1000).toFixed(2)}s</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+      <div className="tf-queue-columns">
+        <section className="tf-card" aria-labelledby="worker-title">
+          <div className="tf-card-header"><div><span className="tf-overline">PROCESSING</span><h2 className="tf-card-title" id="worker-title">Worker</h2></div><span className={`tf-health-pill ${stats.worker.alive ? 'is-available' : 'is-unavailable'}`}><span />{stats.worker.alive ? 'Online' : 'Offline'}</span></div>
+          <div className="tf-queue-metric-row"><span>Processed</span><strong>{count(stats.worker.processed)}</strong></div>
+          <div className="tf-queue-metric-row"><span>Succeeded</span><strong>{count(stats.worker.succeeded)}</strong></div>
+          <div className="tf-queue-metric-row"><span>Failed</span><strong>{count(stats.worker.failed)}</strong></div>
+          <div className="tf-queue-metric-row"><span>Retries</span><strong>{count(stats.worker.retries)}</strong></div>
+          <div className="tf-queue-metric-row"><span>Currently active</span><strong>{count(stats.worker.active)}</strong></div>
+          {stats.worker.totalDurationMs !== undefined && <div className="tf-queue-metric-row"><span>Total processing time</span><strong>{(stats.worker.totalDurationMs / 1000).toLocaleString()} s</strong></div>}
+        </section>
+        <section className="tf-card" aria-labelledby="outbox-title">
+          <div className="tf-card-header"><div><span className="tf-overline">TRANSACTIONAL OUTBOX</span><h2 className="tf-card-title" id="outbox-title">Dispatch &amp; recovery</h2></div><span className={`tf-health-pill ${stats.dispatcher.alive ? 'is-available' : 'is-unavailable'}`}><span />Dispatcher {stats.dispatcher.alive ? 'online' : 'offline'}</span></div>
+          <div className="tf-queue-metric-row"><span>Pending</span><strong>{count(stats.outbox.pending)}</strong></div>
+          <div className="tf-queue-metric-row"><span>Processing</span><strong>{count(stats.outbox.processing)}</strong></div>
+          <div className="tf-queue-metric-row"><span>Failed / retryable</span><strong>{count(stats.outbox.failed)}</strong></div>
+          <div className="tf-queue-metric-row"><span>Dispatched</span><strong>{count(stats.outbox.processed)}</strong></div>
+          <div className="tf-queue-metric-row"><span>Dispatch failures</span><strong>{count(stats.outbox.dispatchFailures)}</strong></div>
+          <div className="tf-queue-metric-row"><span>Recovery detected / recovered</span><strong>{count(stats.recovery.detected)} / {count(stats.recovery.recovered)}</strong></div>
+          <div className="tf-queue-metric-row"><span>Recovery failures</span><strong>{count(stats.recovery.failures)}</strong></div>
+        </section>
       </div>
-
-      {/* Workers Table */}
-      <div className="tf-card" style={{ marginTop: '24px' }}>
-        <h2 className="tf-card-title">Worker Nodes</h2>
-        <div className="tf-table-wrapper">
-          <table className="tf-table">
-            <thead>
-              <tr>
-                <th>Worker ID</th>
-                <th>Name / Node</th>
-                <th>Status</th>
-                <th>Load (Active / Concurrency)</th>
-                <th>Total Processed</th>
-                <th>Total Failed</th>
-                <th>Uptime</th>
-              </tr>
-            </thead>
-            <tbody>
-              {stats.workers.map((w) => {
-                const uptimeHours = Math.floor(w.uptimeSeconds / 3600);
-                const uptimeDays = Math.floor(uptimeHours / 24);
-
-                return (
-                  <tr key={w.id}>
-                    <td>
-                      <span className="tf-mono-tag">{w.id}</span>
-                    </td>
-                    <td>{w.name}</td>
-                    <td>
-                      <span
-                        style={{
-                          display: 'inline-flex',
-                          alignItems: 'center',
-                          gap: '6px',
-                          fontSize: '12px',
-                          fontWeight: 500,
-                          color: w.status === 'busy' ? '#1d4ed8' : w.status === 'idle' ? '#15803d' : '#6b7280'
-                        }}
-                      >
-                        <span
-                          style={{
-                            width: '8px',
-                            height: '8px',
-                            borderRadius: '50%',
-                            backgroundColor:
-                              w.status === 'busy' ? '#3b82f6' : w.status === 'idle' ? '#22c55e' : '#9ca3af'
-                          }}
-                        />
-                        {w.status.toUpperCase()}
-                      </span>
-                    </td>
-                    <td>
-                      <span className="tf-mono-text">
-                        {w.activeJobs} / {w.concurrency}
-                      </span>
-                    </td>
-                    <td className="tf-muted-text">{w.totalProcessed.toLocaleString()}</td>
-                    <td>
-                      {w.totalFailed > 0 ? (
-                        <span style={{ color: '#dc2626' }}>{w.totalFailed}</span>
-                      ) : (
-                        <span className="tf-muted-text">0</span>
-                      )}
-                    </td>
-                    <td className="tf-muted-text">
-                      {uptimeDays > 0 ? `${uptimeDays}d ${uptimeHours % 24}h` : `${uptimeHours}h`}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      </div>
+      <p className="tf-metrics-note">Metrics are a point-in-time snapshot. Refresh to request the latest values.</p>
     </div>
   );
 };

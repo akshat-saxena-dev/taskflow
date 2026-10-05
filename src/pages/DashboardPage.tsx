@@ -1,207 +1,158 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import type { DashboardStats, Job } from '../types/job';
-import { api } from '../services/api';
+import { api, type OperationalMetrics } from '../services/api';
 import { StatusBadge } from '../components/StatusBadge';
 import { PriorityBadge } from '../components/PriorityBadge';
 import { LoadingState } from '../components/LoadingState';
 import { ErrorState } from '../components/ErrorState';
 import { EmptyState } from '../components/EmptyState';
-import type { OperationalMetrics } from '../services/api';
 
 interface DashboardPageProps {
   onSelectJob: (jobId: string) => void;
   onNavigateToJobs: () => void;
 }
 
+const formatTime = (value: Date | null) => value?.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) ?? '—';
+
+const fetchDashboardData = async () => {
+  const [stats, jobs, operations] = await Promise.all([
+    api.getDashboardStats(),
+    api.getJobs(),
+    api.getOperationalMetrics().catch(() => null)
+  ]);
+  return { stats, jobs, operations };
+};
+
 export const DashboardPage: React.FC<DashboardPageProps> = ({ onSelectJob, onNavigateToJobs }) => {
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [recentJobs, setRecentJobs] = useState<Job[]>([]);
-  const [loading, setLoading] = useState<boolean>(true);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [operations, setOperations] = useState<OperationalMetrics | null>(null);
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
 
-  const loadData = async () => {
+  const loadData = useCallback(async () => {
     try {
-      setLoading(true);
       setError(null);
-      const [statsData, jobsData, operationsData] = await Promise.all([
-        api.getDashboardStats(),
-        api.getJobs(),
-        api.getOperationalMetrics().catch(() => null)
-      ]);
+      setRefreshing(true);
+      const { stats: statsData, jobs: jobsData, operations: operationsData } = await fetchDashboardData();
       setStats(statsData);
       setOperations(operationsData);
       setLastRefresh(new Date());
-      // Take up to 5 most recent jobs
       setRecentJobs(jobsData.slice(0, 5));
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Failed to fetch dashboard data');
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
-  };
-
-  useEffect(() => {
-    let isMounted = true;
-
-    const fetchData = async () => {
-      try {
-        setLoading(true);
-        setError(null);
-        const [statsData, jobsData, operationsData] = await Promise.all([
-          api.getDashboardStats(),
-          api.getJobs(),
-          api.getOperationalMetrics().catch(() => null)
-        ]);
-        if (isMounted) {
-          setStats(statsData);
-          setRecentJobs(jobsData.slice(0, 5));
-          setOperations(operationsData);
-          setLastRefresh(new Date());
-        }
-      } catch (err: unknown) {
-        if (isMounted) {
-          setError(err instanceof Error ? err.message : 'Failed to fetch dashboard data');
-        }
-      } finally {
-        if (isMounted) {
-          setLoading(false);
-        }
-      }
-    };
-
-    void fetchData();
-
-    return () => {
-      isMounted = false;
-    };
   }, []);
 
-  if (loading) {
-    return <LoadingState message="Loading dashboard metrics..." />;
-  }
+  useEffect(() => {
+    let mounted = true;
+    const fetchInitialData = async () => {
+      try {
+        const { stats: statsData, jobs: jobsData, operations: operationsData } = await fetchDashboardData();
+        if (mounted) {
+          setStats(statsData);
+          setOperations(operationsData);
+          setLastRefresh(new Date());
+          setRecentJobs(jobsData.slice(0, 5));
+        }
+      } catch (err: unknown) {
+        if (mounted) setError(err instanceof Error ? err.message : 'Failed to fetch dashboard data');
+      } finally {
+        if (mounted) setLoading(false);
+      }
+    };
+    void fetchInitialData();
+    return () => { mounted = false; };
+  }, []);
 
-  if (error) {
-    return <ErrorState message={error} onRetry={loadData} />;
-  }
+  if (loading) return <LoadingState message="Loading operational overview..." />;
+  if (error) return <ErrorState message={error} onRetry={() => { void loadData(); }} />;
+
+  const overview = [
+    { label: 'Total jobs', value: stats?.total ?? 0 },
+    { label: 'Waiting', value: stats?.waiting ?? 0, tone: 'waiting' },
+    { label: 'Active', value: stats?.active ?? 0, tone: 'active' },
+    { label: 'Completed', value: stats?.completed ?? 0, tone: 'completed' },
+    { label: 'Failed', value: stats?.failed ?? 0, tone: 'failed' },
+    { label: 'Delayed', value: stats?.delayed ?? 0 }
+  ];
 
   return (
     <div className="tf-page">
-      <div className="tf-page-header">
+      <header className="tf-page-header">
         <div>
+          <span className="tf-overline">TASKFLOW / OPERATIONS</span>
           <h1 className="tf-page-title">Dashboard</h1>
-          <p className="tf-page-subtitle">Real-time overview of background job distribution and health</p>
+          <p className="tf-page-subtitle">A current snapshot of job activity and processing health.</p>
         </div>
-        <button className="tf-btn-secondary" onClick={loadData}>
-          Refresh
-        </button>
-      </div>
-
-      {stats && (
-        <div className="tf-stats-grid">
-          <div className="tf-stat-card">
-            <span className="tf-stat-label">Total Jobs</span>
-            <span className="tf-stat-value">{stats.total}</span>
-          </div>
-          <div className="tf-stat-card tf-stat-waiting">
-            <span className="tf-stat-label">Waiting</span>
-            <span className="tf-stat-value">{stats.waiting}</span>
-          </div>
-          <div className="tf-stat-card tf-stat-active">
-            <span className="tf-stat-label">Active</span>
-            <span className="tf-stat-value">{stats.active}</span>
-          </div>
-          <div className="tf-stat-card tf-stat-completed">
-            <span className="tf-stat-label">Completed</span>
-            <span className="tf-stat-value">{stats.completed}</span>
-          </div>
-          <div className="tf-stat-card tf-stat-failed">
-            <span className="tf-stat-label">Failed</span>
-            <span className="tf-stat-value">{stats.failed}</span>
-          </div>
-        </div>
-      )}
-
-      {operations && <div className="tf-card" style={{ marginTop: '24px', padding: '20px' }}>
-        <div className="tf-card-header"><h2 className="tf-card-title">System health</h2><span className="tf-muted-text">Last refresh: {lastRefresh?.toLocaleTimeString()}</span></div>
-        <div className="tf-stats-grid">
-          {(['waiting', 'active', 'delayed', 'completed', 'failed'] as const).map((key) => <div className="tf-stat-card" key={key}><span className="tf-stat-label">Queue {key}</span><span className="tf-stat-value">{operations.queue[key]}</span></div>)}
-          <div className="tf-stat-card"><span className="tf-stat-label">Worker</span><span className="tf-stat-value">{operations.worker.alive ? 'Online' : 'Offline'}</span></div>
-          <div className="tf-stat-card"><span className="tf-stat-label">Jobs processed</span><span className="tf-stat-value">{operations.worker.processed ?? 0}</span></div>
-          <div className="tf-stat-card"><span className="tf-stat-label">Retries</span><span className="tf-stat-value">{operations.worker.retries ?? 0}</span></div>
-          <div className="tf-stat-card"><span className="tf-stat-label">Avg processing</span><span className="tf-stat-value">{operations.worker.processed ? `${Math.round((operations.worker.totalDurationMs ?? 0) / operations.worker.processed)} ms` : '—'}</span></div>
-          <div className="tf-stat-card"><span className="tf-stat-label">Queue pressure</span><span className="tf-stat-value">{operations.pressure ? `${operations.pressure.pending} / ${operations.pressure.maxPending}` : '—'}</span></div>
-        </div>
-        <p className="tf-muted-text" style={{ marginTop: '16px' }}>
-          Dispatcher: {operations.dispatcher.alive ? 'Online' : 'Offline'} · API: {operations.shutdown?.api ? 'Shutting down' : 'Running'} · Outbox pending: {operations.outbox.pending} · Processing: {operations.outbox.processing} · Failed: {operations.outbox.failed} · Processed: {operations.outbox.processed} · Dispatch failures: {operations.outbox.dispatchFailures}
-        </p>
-        <p className="tf-muted-text">Stale job recovery: {operations.recovery.recovered} recovered · {operations.recovery.failures} recovery failures · {operations.recovery.detected} detected · Rate limited: {operations.submissionRejections?.rateLimited ?? 0} · Backpressure rejected: {operations.submissionRejections?.backpressure ?? 0}</p>
-      </div>}
-
-      <div className="tf-card" style={{ marginTop: '24px' }}>
-        <div className="tf-card-header">
-          <h2 className="tf-card-title">Recent Jobs</h2>
-          <button className="tf-btn-link" onClick={onNavigateToJobs}>
-            View all jobs &rarr;
+        <div className="tf-page-header-actions">
+          {lastRefresh && <span className="tf-muted-text">Updated {formatTime(lastRefresh)}</span>}
+          <button type="button" className="tf-btn-secondary" onClick={() => { void loadData(); }} disabled={refreshing}>
+            <span aria-hidden="true">↻</span> {refreshing ? 'Refreshing…' : 'Refresh'}
           </button>
         </div>
+      </header>
 
-        {recentJobs.length === 0 ? (
-          <EmptyState title="No recent jobs" description="No background jobs have been scheduled yet." />
-        ) : (
+      <section className="tf-stats-grid" aria-label="Job totals">
+        {overview.map((item) => (
+          <article className={`tf-stat-card ${item.tone ? `tf-stat-${item.tone}` : ''}`} key={item.label}>
+            <span className="tf-stat-label">{item.label}</span>
+            <span className="tf-stat-value">{item.value.toLocaleString()}</span>
+          </article>
+        ))}
+      </section>
+
+      <section className="tf-card tf-dashboard-section" aria-labelledby="health-title">
+        <div className="tf-card-header">
+          <div><span className="tf-overline">LIVE TELEMETRY</span><h2 className="tf-card-title" id="health-title">System health</h2></div>
+          <span className={`tf-health-pill ${operations ? 'is-available' : 'is-unavailable'}`}><span />{operations ? 'Metrics available' : 'Metrics unavailable'}</span>
+        </div>
+        {operations ? (
+          <>
+            <div className="tf-system-grid">
+              <div className="tf-system-card"><span className="tf-system-label">Queue waiting</span><strong className="tf-system-value">{operations.queue.waiting.toLocaleString()}</strong><span className="tf-system-caption">{operations.queue.active.toLocaleString()} active · {operations.queue.delayed.toLocaleString()} delayed</span></div>
+              <div className="tf-system-card"><span className="tf-system-label">Worker processing</span><strong className="tf-system-value">{operations.worker.processed?.toLocaleString() ?? '—'}</strong><span className="tf-system-caption">{operations.worker.active ?? 0} active · {operations.worker.retries ?? 0} retries</span></div>
+              <div className="tf-system-card"><span className="tf-system-label">Pending outbox</span><strong className="tf-system-value">{(operations.outbox.pending + operations.outbox.processing).toLocaleString()}</strong><span className="tf-system-caption">{operations.outbox.failed} failed records</span></div>
+              <div className="tf-system-card"><span className="tf-system-label">Queue pressure</span><strong className="tf-system-value">{operations.pressure ? `${operations.pressure.pending.toLocaleString()} / ${operations.pressure.maxPending.toLocaleString()}` : '—'}</strong><span className="tf-system-caption">{operations.pressure?.overloaded ? 'Capacity threshold reached' : 'Pending work / configured limit'}</span></div>
+            </div>
+            <div className="tf-health-line" aria-label="Service status">
+              <span className="tf-health-item"><span className={`tf-health-dot ${operations.worker.alive ? 'is-up' : 'is-down'}`} />Worker {operations.worker.alive ? 'online' : 'offline'}</span>
+              <span className="tf-health-item"><span className={`tf-health-dot ${operations.dispatcher.alive ? 'is-up' : 'is-down'}`} />Dispatcher {operations.dispatcher.alive ? 'online' : 'offline'}</span>
+              <span className="tf-health-item"><span className={`tf-health-dot ${operations.outbox.failed ? 'is-warning' : 'is-up'}`} />Outbox {operations.outbox.failed ? `${operations.outbox.failed} failed` : 'clear'}</span>
+              {operations.shutdown?.api && <span className="tf-health-item"><span className="tf-health-dot is-warning" />API shutting down</span>}
+            </div>
+          </>
+        ) : <p className="tf-muted-text">Operational metrics could not be loaded. Job totals above are available separately.</p>}
+      </section>
+
+      <section className="tf-card tf-dashboard-section" aria-labelledby="recent-jobs-title">
+        <div className="tf-card-header">
+          <div><span className="tf-overline">LATEST ACTIVITY</span><h2 className="tf-card-title" id="recent-jobs-title">Recent jobs</h2></div>
+          <button type="button" className="tf-btn-link" onClick={onNavigateToJobs}>View all jobs <span aria-hidden="true">→</span></button>
+        </div>
+        {recentJobs.length === 0 ? <EmptyState title="No jobs yet" description="Jobs submitted to TaskFlow will appear here." /> : (
           <div className="tf-table-wrapper">
-            <table className="tf-table">
-              <thead>
-                <tr>
-                  <th>Job ID</th>
-                  <th>Type</th>
-                  <th>Priority</th>
-                  <th>Status</th>
-                  <th>Created</th>
-                  <th>Action</th>
+            <table className="tf-table tf-mobile-table">
+              <thead><tr><th>Job ID</th><th>Type</th><th>Priority</th><th>Status</th><th>Created</th><th>Action</th></tr></thead>
+              <tbody>{recentJobs.map((job) => (
+                <tr key={job.id} className="tf-clickable-row" onClick={() => onSelectJob(job.id)}>
+                  <td data-label="Job ID"><span className="tf-mono-tag">{job.id}</span></td>
+                  <td data-label="Type"><span className="tf-job-type">{job.type}</span></td>
+                  <td data-label="Priority"><PriorityBadge priority={job.priority} /></td>
+                  <td data-label="Status"><StatusBadge status={job.status} /></td>
+                  <td data-label="Created"><span className="tf-muted-text">{new Date(job.createdAt).toLocaleString()}</span></td>
+                  <td data-label="Action"><button type="button" className="tf-btn-xs" aria-label={`Inspect job ${job.id}`} onClick={(event) => { event.stopPropagation(); onSelectJob(job.id); }}>Inspect details</button></td>
                 </tr>
-              </thead>
-              <tbody>
-                {recentJobs.map((job) => (
-                  <tr
-                    key={job.id}
-                    onClick={() => onSelectJob(job.id)}
-                    className="tf-clickable-row"
-                  >
-                    <td>
-                      <span className="tf-mono-tag">{job.id}</span>
-                    </td>
-                    <td>
-                      <span className="tf-job-type">{job.type}</span>
-                    </td>
-                    <td>
-                      <PriorityBadge priority={job.priority} />
-                    </td>
-                    <td>
-                      <StatusBadge status={job.status} />
-                    </td>
-                    <td className="tf-muted-text">
-                      {new Date(job.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
-                    </td>
-                    <td>
-                      <button
-                        className="tf-btn-xs"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          onSelectJob(job.id);
-                        }}
-                      >
-                        Inspect
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
+              ))}</tbody>
             </table>
           </div>
         )}
-      </div>
+      </section>
     </div>
   );
 };

@@ -9,6 +9,8 @@ import { EmptyState } from '../components/EmptyState';
 
 interface JobDetailsPageProps { jobId: string; onBack: () => void; }
 
+const formatDate = (value?: string) => value ? new Date(value).toLocaleString() : '—';
+
 export const JobDetailsPage: React.FC<JobDetailsPageProps> = ({ jobId, onBack }) => {
   const [job, setJob] = useState<Job | null>(null);
   const [loading, setLoading] = useState(true);
@@ -50,7 +52,7 @@ export const JobDetailsPage: React.FC<JobDetailsPageProps> = ({ jobId, onBack })
     let mounted = true;
     const timer = window.setInterval(() => {
       void api.getJobById(jobId).then((nextJob) => {
-        if (mounted) setJob(nextJob);
+        if (mounted) { setJob(nextJob); setError(null); }
       }).catch((err: unknown) => {
         if (mounted) setError(err instanceof Error ? err.message : 'Failed to refresh job status');
       });
@@ -86,47 +88,54 @@ export const JobDetailsPage: React.FC<JobDetailsPageProps> = ({ jobId, onBack })
 
   if (loading) return <LoadingState message={`Fetching details for job ${jobId}...`} />;
   if (error && !job) return <ErrorState message={error} onRetry={() => { void loadJob(); }} />;
-  if (!job) return <div className="tf-page"><button className="tf-btn-secondary" onClick={onBack}>&larr; Back</button><EmptyState title="Job Not Found" description="This job does not exist or is not available to your account." actionText="Back to Jobs" onAction={onBack} /></div>;
+  if (!job) return <div className="tf-page"><button className="tf-btn-secondary" onClick={onBack}>← Back</button><EmptyState title="Job not found" description="This job does not exist or is not available to your account." actionText="Back to jobs" onAction={onBack} /></div>;
 
   return (
     <div className="tf-page">
-      <div className="tf-page-header">
-        <div>
-          <button className="tf-btn-link" onClick={onBack} style={{ marginBottom: '8px', padding: 0 }}>&larr; Back to jobs list</button>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
-            <h1 className="tf-page-title">{job.id}</h1>
+      <header className="tf-page-header">
+        <div className="tf-detail-heading">
+          <button type="button" className="tf-btn-link" onClick={onBack}>← Back to jobs</button>
+          <div className="tf-detail-title-row">
+            <h1 className="tf-detail-id">{job.id}</h1>
             <StatusBadge status={job.status as JobStatus} />
             <PriorityBadge priority={job.priority} />
           </div>
-          <p className="tf-page-subtitle">Type: <strong>{job.type}</strong></p>
+          <p className="tf-page-subtitle">Job type <strong>{job.type}</strong> <span aria-hidden="true">·</span> Queue <strong>{job.queue}</strong></p>
         </div>
-        <div className="tf-actions-row">
-          <button className="tf-btn-secondary" onClick={() => { void loadJob(); }} disabled={loading}>Refresh</button>
-          {job.status === 'failed' && <button className="tf-btn-primary" onClick={() => { void retryJob(); }} disabled={retrying}>{retrying ? 'Retrying…' : 'Retry Job'}</button>}
-          {job.status !== 'active' && <button className="tf-btn-danger" onClick={deleteJob} disabled={deleting}>{deleting ? 'Deleting…' : 'Delete Job'}</button>}
+        <div className="tf-actions-row tf-detail-actions">
+          <button type="button" className="tf-btn-secondary" onClick={() => { void loadJob(); }} disabled={loading}>Refresh</button>
+          {job.status === 'failed' && <button type="button" className="tf-btn-primary" onClick={() => { void retryJob(); }} disabled={retrying}>{retrying ? 'Retrying…' : 'Retry job'}</button>}
+          {job.status !== 'active' && <button type="button" className="tf-btn-danger" onClick={deleteJob} disabled={deleting}>{deleting ? 'Deleting…' : 'Delete job'}</button>}
         </div>
-      </div>
+      </header>
       {error && <p role="alert" className="tf-error-text">{error}</p>}
+
+      <section className="tf-lifecycle" aria-label="Job lifecycle timestamps">
+        <div className="tf-lifecycle-step"><span>Created</span><strong>{formatDate(job.createdAt)}</strong></div>
+        <div className="tf-lifecycle-step"><span>Started</span><strong>{formatDate(job.startedAt)}</strong></div>
+        <div className="tf-lifecycle-step"><span>Completed</span><strong>{formatDate(job.completedAt)}</strong></div>
+        <div className="tf-lifecycle-step"><span>Attempts</span><strong>{job.attempts}</strong></div>
+      </section>
+
       <div className="tf-details-grid">
-        <div className="tf-card">
-          <h2 className="tf-card-title">Job details</h2>
-          <div className="tf-keyvalue-list">
-            <div className="tf-keyvalue-item"><span className="tf-key">Created At</span><span className="tf-value">{new Date(job.createdAt).toLocaleString()}</span></div>
-            <div className="tf-keyvalue-item"><span className="tf-key">Updated At</span><span className="tf-value">{job.updatedAt ? new Date(job.updatedAt).toLocaleString() : '—'}</span></div>
-            <div className="tf-keyvalue-item"><span className="tf-key">Started At</span><span className="tf-value">{job.startedAt ? new Date(job.startedAt).toLocaleString() : '—'}</span></div>
-            <div className="tf-keyvalue-item"><span className="tf-key">Completed At</span><span className="tf-value">{job.completedAt ? new Date(job.completedAt).toLocaleString() : '—'}</span></div>
-            <div className="tf-keyvalue-item"><span className="tf-key">Attempts</span><span className="tf-value">{job.attempts}</span></div>
-          </div>
-        </div>
-        <div className="tf-card">
-          <h2 className="tf-card-title">Result</h2>
-          {job.error ? <pre className="tf-code-block">{job.error}</pre> : job.result ? <pre className="tf-code-block">{JSON.stringify(job.result, null, 2)}</pre> : <div className="tf-pending-box">No result is available for this job yet.</div>}
-        </div>
+        <section className="tf-card" aria-labelledby="job-info-title">
+          <h2 className="tf-card-title" id="job-info-title">Job information</h2>
+          <dl className="tf-keyvalue-list">
+            <div className="tf-keyvalue-item"><dt className="tf-key">Updated</dt><dd className="tf-value">{formatDate(job.updatedAt)}</dd></div>
+            <div className="tf-keyvalue-item"><dt className="tf-key">Failed</dt><dd className="tf-value">{formatDate(job.failedAt)}</dd></div>
+            <div className="tf-keyvalue-item"><dt className="tf-key">Maximum attempts</dt><dd className="tf-value">{job.maxAttempts || '—'}</dd></div>
+            <div className="tf-keyvalue-item"><dt className="tf-key">Queue</dt><dd className="tf-value">{job.queue}</dd></div>
+          </dl>
+        </section>
+        <section className="tf-card" aria-labelledby="job-result-title">
+          <h2 className="tf-card-title" id="job-result-title">{job.error ? 'Failure details' : 'Result'}</h2>
+          {job.error ? <pre className="tf-code-block is-error">{job.error}</pre> : job.result ? <pre className="tf-code-block">{JSON.stringify(job.result, null, 2)}</pre> : <div className="tf-pending-box">No result is available for this job yet.</div>}
+        </section>
       </div>
-      <div className="tf-card" style={{ marginTop: '20px' }}>
-        <h2 className="tf-card-title">Job Payload</h2>
+      <section className="tf-card tf-payload-card" aria-labelledby="job-payload-title">
+        <h2 className="tf-card-title" id="job-payload-title">Job payload</h2>
         <pre className="tf-code-block">{JSON.stringify(job.payload, null, 2)}</pre>
-      </div>
+      </section>
     </div>
   );
 };

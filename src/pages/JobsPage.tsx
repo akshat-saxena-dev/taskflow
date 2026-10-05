@@ -25,6 +25,7 @@ export const JobsPage: React.FC<JobsPageProps> = ({ onSelectJob }) => {
   const [payloadText, setPayloadText] = useState('{}');
   const [priority, setPriority] = useState('normal');
   const [createError, setCreateError] = useState<string | null>(null);
+  const [actionMessage, setActionMessage] = useState<string | null>(null);
   const createAttempt = useRef<{ signature: string; key: string } | null>(null);
 
   const loadJobs = useCallback(async () => {
@@ -77,9 +78,10 @@ export const JobsPage: React.FC<JobsPageProps> = ({ onSelectJob }) => {
     try {
       setActionInProgress(id);
       await api.deleteJob(id);
+      setActionMessage('Job deleted.');
       await loadJobs();
     } catch (err: unknown) {
-      alert(err instanceof Error ? err.message : 'Failed to delete job');
+      setActionMessage(err instanceof Error ? err.message : 'Failed to delete job');
     } finally {
       setActionInProgress(null);
     }
@@ -90,9 +92,10 @@ export const JobsPage: React.FC<JobsPageProps> = ({ onSelectJob }) => {
     try {
       setActionInProgress(id);
       await api.retryJob(id);
+      setActionMessage('Job queued for retry.');
       await loadJobs();
     } catch (err: unknown) {
-      alert(err instanceof Error ? err.message : 'Failed to retry job');
+      setActionMessage(err instanceof Error ? err.message : 'Failed to retry job');
     } finally {
       setActionInProgress(null);
     }
@@ -101,6 +104,7 @@ export const JobsPage: React.FC<JobsPageProps> = ({ onSelectJob }) => {
   const handleCreate = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     setCreateError(null);
+    setActionMessage(null);
     try {
       const payload: unknown = JSON.parse(payloadText);
       if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
@@ -113,6 +117,7 @@ export const JobsPage: React.FC<JobsPageProps> = ({ onSelectJob }) => {
       }
       setActionInProgress('create');
       await api.createJob(input, createAttempt.current.key);
+      setActionMessage('Job submitted successfully.');
       createAttempt.current = null;
       setJobType('');
       setPayloadText('{}');
@@ -146,20 +151,27 @@ export const JobsPage: React.FC<JobsPageProps> = ({ onSelectJob }) => {
         </button>
       </div>
 
-      <form className="tf-card" onSubmit={handleCreate} style={{ marginBottom: '20px' }}>
+      <form className="tf-card tf-create-form" onSubmit={handleCreate}>
         <h2 className="tf-card-title">Create a job</h2>
-        <div className="tf-toolbar">
+        <div className="tf-create-controls">
+          <label className="tf-create-field"><span className="tf-filter-label">Job type</span>
           <select className="tf-select" aria-label="Job type" value={jobType} onChange={(e) => setJobType(e.target.value)} required>
             <option value="" disabled>Select a job type</option><option value="email">Email demo</option><option value="report">Report demo</option><option value="data-processing">Data processing demo</option>
           </select>
+          </label>
+          <label className="tf-create-field"><span className="tf-filter-label">Priority</span>
           <select className="tf-select" aria-label="Priority" value={priority} onChange={(e) => setPriority(e.target.value)}>
             <option value="low">Low priority</option><option value="normal">Normal priority</option><option value="high">High priority</option><option value="critical">Critical priority</option>
           </select>
+          </label>
+          <div className="tf-create-field">
           <button className="tf-btn-primary" type="submit" disabled={actionInProgress === 'create'}>{actionInProgress === 'create' ? 'Creating…' : 'Create Job'}</button>
+          </div>
         </div>
-        <label className="tf-filter-label" htmlFor="job-payload">Payload (JSON object)</label>
+        <label className="tf-payload-label" htmlFor="job-payload">Payload (JSON object)</label>
         <textarea id="job-payload" className="tf-input" rows={4} value={payloadText} onChange={(e) => setPayloadText(e.target.value)} />
         {createError && <p role="alert" className="tf-error-text">{createError}</p>}
+        {actionMessage && <p role="status" className="tf-feedback">{actionMessage}</p>}
       </form>
 
       <div className="tf-toolbar">
@@ -185,6 +197,7 @@ export const JobsPage: React.FC<JobsPageProps> = ({ onSelectJob }) => {
           <input
             type="text"
             className="tf-input"
+            aria-label="Search jobs by ID or type"
             placeholder="Search by ID or type..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
@@ -218,7 +231,7 @@ export const JobsPage: React.FC<JobsPageProps> = ({ onSelectJob }) => {
       ) : (
         <div className="tf-card">
           <div className="tf-table-wrapper">
-            <table className="tf-table">
+            <table className="tf-table tf-mobile-table">
               <thead>
                 <tr>
                   <th>Job ID</th>
@@ -239,26 +252,29 @@ export const JobsPage: React.FC<JobsPageProps> = ({ onSelectJob }) => {
                     <tr
                       key={job.id}
                       className="tf-clickable-row"
+                      tabIndex={0}
+                      aria-label={`Open job ${job.id}`}
                       onClick={() => onSelectJob(job.id)}
+                      onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); onSelectJob(job.id); } }}
                     >
-                      <td>
+                      <td data-label="Job ID">
                         <span className="tf-mono-tag">{job.id}</span>
                       </td>
-                      <td>
+                      <td data-label="Type">
                         <span className="tf-job-type">{job.type}</span>
                       </td>
-                      <td>
+                      <td data-label="Status">
                         <StatusBadge status={job.status as JobStatus} />
                       </td>
-                      <td>
+                      <td data-label="Priority">
                         <PriorityBadge priority={job.priority} />
                       </td>
-                      <td>
+                      <td data-label="Attempts">
                         <span className="tf-mono-text">
                           {job.attempts}
                         </span>
                       </td>
-                      <td className="tf-muted-text">
+                      <td data-label="Created" className="tf-muted-text">
                         {new Date(job.createdAt).toLocaleString(undefined, {
                           month: 'short',
                           day: 'numeric',
@@ -267,7 +283,7 @@ export const JobsPage: React.FC<JobsPageProps> = ({ onSelectJob }) => {
                           second: '2-digit'
                         })}
                       </td>
-                      <td style={{ textAlign: 'right' }} onClick={(e) => e.stopPropagation()}>
+                      <td data-label="Actions" style={{ textAlign: 'right' }} onClick={(e) => e.stopPropagation()}>
                         <div className="tf-actions-row">
                           <button
                             className="tf-btn-xs"

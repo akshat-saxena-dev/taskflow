@@ -13,11 +13,19 @@ const COOKIE_MAX_AGE = 7 * 24 * 60 * 60 * 1000; // 7 days in ms
 interface UserRow {
   id: string;
   name: string;
+  display_name?: string | null;
   email: string;
   password_hash: string;
   created_at: Date;
   updated_at: Date;
 }
+
+const getDisplayName = (user: Pick<UserRow, 'display_name' | 'email'>): string => {
+  const displayName = user.display_name?.trim();
+  if (displayName) return displayName;
+  const emailName = user.email.split('@', 1)[0]?.trim();
+  return emailName || 'User';
+};
 
 const getCookieOptions = () => ({
   httpOnly: true,
@@ -29,7 +37,7 @@ const getCookieOptions = () => ({
 
 const generateToken = (user: AuthUser): string => {
   return jwt.sign(
-    { id: user.id, name: user.name, email: user.email },
+    { id: user.id, name: user.name, displayName: user.displayName, email: user.email },
     config.jwtSecret,
     { expiresIn: TOKEN_EXPIRY }
   );
@@ -37,11 +45,23 @@ const generateToken = (user: AuthUser): string => {
 
 export const register = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { name, email, password } = req.body;
+    const { displayName: requestedDisplayName, name, email, password } = req.body;
+    const displayNameInput = requestedDisplayName ?? name;
 
     // 1. Input Validation
-    if (!name || typeof name !== 'string' || name.trim().length < 2) {
-      res.status(400).json({ error: 'Name must be at least 2 characters long' });
+    if (typeof displayNameInput !== 'string' || !displayNameInput.trim()) {
+      res.status(400).json({ error: 'Display name is required' });
+      return;
+    }
+
+    const trimmedDisplayName = displayNameInput.trim();
+    const displayNameLength = Array.from(trimmedDisplayName).length;
+    if (displayNameLength > 50) {
+      res.status(400).json({ error: 'Display name must be 50 characters or fewer' });
+      return;
+    }
+    if (requestedDisplayName == null && displayNameLength < 2) {
+      res.status(400).json({ error: 'Display name must be at least 2 characters long' });
       return;
     }
 
@@ -56,7 +76,7 @@ export const register = async (req: Request, res: Response): Promise<void> => {
     }
 
     const normalizedEmail = email.trim().toLowerCase();
-    const trimmedName = name.trim();
+    const trimmedName = trimmedDisplayName;
 
     // 2. Check for duplicate email before insert
     const existingUser = await db.query<UserRow>(
@@ -75,16 +95,17 @@ export const register = async (req: Request, res: Response): Promise<void> => {
 
     // 4. Insert user using parameterized SQL
     const insertResult = await db.query<UserRow>(
-      `INSERT INTO users (name, email, password_hash)
-       VALUES ($1, $2, $3)
-       RETURNING id, name, email, created_at`,
-      [trimmedName, normalizedEmail, passwordHash]
+      `INSERT INTO users (name, display_name, email, password_hash)
+       VALUES ($1, $2, $3, $4)
+       RETURNING id, name, display_name, email, created_at`,
+      [trimmedName, trimmedDisplayName, normalizedEmail, passwordHash]
     );
 
     const newUser = insertResult.rows[0];
     const userPayload: AuthUser = {
       id: newUser.id,
       name: newUser.name,
+      displayName: getDisplayName(newUser),
       email: newUser.email
     };
 
@@ -97,6 +118,7 @@ export const register = async (req: Request, res: Response): Promise<void> => {
       user: {
         id: newUser.id,
         name: newUser.name,
+        displayName: getDisplayName(newUser),
         email: newUser.email,
         createdAt: newUser.created_at
       }
@@ -126,7 +148,7 @@ export const login = async (req: Request, res: Response): Promise<void> => {
 
     // Query user by normalized email
     const result = await db.query<UserRow>(
-      'SELECT id, name, email, password_hash, created_at FROM users WHERE LOWER(email) = LOWER($1)',
+      'SELECT id, name, display_name, email, password_hash, created_at FROM users WHERE LOWER(email) = LOWER($1)',
       [normalizedEmail]
     );
 
@@ -147,6 +169,7 @@ export const login = async (req: Request, res: Response): Promise<void> => {
     const userPayload: AuthUser = {
       id: user.id,
       name: user.name,
+      displayName: getDisplayName(user),
       email: user.email
     };
 
@@ -158,6 +181,7 @@ export const login = async (req: Request, res: Response): Promise<void> => {
       user: {
         id: user.id,
         name: user.name,
+        displayName: getDisplayName(user),
         email: user.email,
         createdAt: user.created_at
       }
@@ -189,7 +213,7 @@ export const me = async (req: Request, res: Response): Promise<void> => {
 
     // Verify user still exists in database and get fresh info
     const result = await db.query<UserRow>(
-      'SELECT id, name, email, created_at FROM users WHERE id = $1',
+      'SELECT id, name, display_name, email, created_at FROM users WHERE id = $1',
       [req.user.id]
     );
 
@@ -203,6 +227,7 @@ export const me = async (req: Request, res: Response): Promise<void> => {
       user: {
         id: user.id,
         name: user.name,
+        displayName: getDisplayName(user),
         email: user.email,
         createdAt: user.created_at
       }
