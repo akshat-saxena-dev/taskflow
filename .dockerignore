@@ -1,0 +1,17 @@
+node_modules
+dist
+dist-ssr
+coverage
+server
+*.log
+npm-debug.log*
+.git
+.vscode
+.idea
+.DS_Store
+.env
+.env.*
+server/.env
+server/.env.*
+server/node_modules
+server/dist

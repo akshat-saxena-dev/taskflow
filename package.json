@@ -1,0 +1,33 @@
+{
+  "name": "taskflow",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "lint": "oxlint",
+    "preview": "vite preview",
+    "server:dev": "npm --prefix server run dev",
+    "server:worker:dev": "npm --prefix server run worker:dev",
+    "server:dispatcher:dev": "npm --prefix server run dispatcher:dev",
+    "server:build": "npm --prefix server run build",
+    "server:dispatcher": "npm --prefix server run dispatcher",
+    "server:worker": "npm --prefix server run worker",
+    "server:test": "npm --prefix server run test",
+    "server:load-test": "npm --prefix server run load-test --"
+  },
+  "dependencies": {
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8"
+  },
+  "devDependencies": {
+    "@types/node": "^24.13.3",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.7",
+    "@vitejs/plugin-react": "^6.1.1",
+    "oxlint": "^1.81.0",
+    "typescript": "~6.0.2",
+    "vite": "^8.3.0"
+  }
+}
