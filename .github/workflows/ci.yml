@@ -1,0 +1,64 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Validate application and Docker
+    runs-on: ubuntu-latest
+    env:
+      # Synthetic values satisfy Compose interpolation only; no service is started.
+      DATABASE_URL: postgresql://ci.invalid/taskflow
+      REDIS_URL: rediss://ci.invalid:6379
+      JWT_SECRET: ci-validation-placeholder-only
+      CLIENT_URL: http://localhost
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            server/package-lock.json
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Lint frontend
+        run: npm run lint
+
+      - name: Build frontend
+        run: npm run build
+
+      - name: Install backend dependencies
+        working-directory: server
+        run: npm ci
+
+      - name: Build backend
+        working-directory: server
+        run: npm run build
+
+      - name: Test backend
+        working-directory: server
+        run: npm test
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Validate Compose configuration
+        run: docker compose config --quiet
+
+      - name: Build Compose images
+        run: docker compose build frontend api worker dispatcher

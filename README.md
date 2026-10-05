@@ -40,6 +40,53 @@ docker compose down
 
 After changing code or Docker configuration, rebuild and recreate services with `docker compose up --build -d`. To validate frontend-to-API routing, open the frontend origin and check a request such as `/api/auth/me` in the browser network panel; an unauthenticated request should receive the API's normal unauthenticated response rather than an Nginx 502/404.
 
+## CI/CD and published images
+
+### Continuous integration
+
+GitHub Actions runs [CI](.github/workflows/ci.yml) for pushes to `main` and pull requests targeting `main`. It installs dependencies from both lockfiles, runs frontend lint/build, compiles the backend, runs the existing backend tests, validates the local Compose file, and builds the frontend, API, worker, and dispatcher Compose images. Integration tests that need `TEST_DATABASE_URL` retain their existing skip behavior when it is not configured. CI uses synthetic placeholder values only to satisfy Compose interpolation; it does not start services or connect to Neon or Upstash.
+
+### Image publishing
+
+After a successful CI run for a push to `main`, [CD](.github/workflows/cd.yml) publishes images to GitHub Container Registry (GHCR). It does not publish pull requests or feature branches and does not deploy or start the images. Image names use the repository owner and repository name from GitHub Actions, lowercased:
+
+- `ghcr.io/<owner>/<repository>-frontend`
+- `ghcr.io/<owner>/<repository>-api`
+- `ghcr.io/<owner>/<repository>-worker`
+- `ghcr.io/<owner>/<repository>-dispatcher`
+
+Each name receives the full commit SHA as an immutable version tag and `latest` for the main branch. API, worker, and dispatcher tags point to the same backend runtime image build; the production Compose file selects the existing entrypoint command for each role. Publishing authenticates with the workflow's least-privilege `GITHUB_TOKEN` (`packages: write`); no personal access token is configured in the workflow.
+
+To pull a particular commit's images, set the prefix to your repository and the tag to the full commit SHA:
+
+```sh
+export GHCR_IMAGE_PREFIX=ghcr.io/OWNER/REPOSITORY
+export TASKFLOW_IMAGE_TAG=full_commit_sha
+docker login ghcr.io
+docker pull "$GHCR_IMAGE_PREFIX-frontend:$TASKFLOW_IMAGE_TAG"
+docker pull "$GHCR_IMAGE_PREFIX-api:$TASKFLOW_IMAGE_TAG"
+docker pull "$GHCR_IMAGE_PREFIX-worker:$TASKFLOW_IMAGE_TAG"
+docker pull "$GHCR_IMAGE_PREFIX-dispatcher:$TASKFLOW_IMAGE_TAG"
+```
+
+For private GHCR packages, authenticate with a GitHub identity that has package read access. Package visibility and access can be managed in the repository's GitHub Packages settings.
+
+### Production Compose
+
+The local [`docker-compose.yml`](docker-compose.yml) continues to build from the working tree, so `docker compose up --build -d` remains the local build-and-run command. [`docker-compose.prod.yml`](docker-compose.prod.yml) pulls the four externally published GHCR images and has no build sections. It keeps the same frontend, API, worker, and dispatcher services, health/readiness behavior, runtime settings, and restart policies. Neon PostgreSQL and Upstash Redis remain external; no database or Redis containers are defined.
+
+Production Compose needs `GHCR_IMAGE_PREFIX=ghcr.io/<owner>/<repository>` and may use `TASKFLOW_IMAGE_TAG=<full-commit-sha>` (defaults to `latest`). It also requires runtime `DATABASE_URL`, `REDIS_URL`, and `JWT_SECRET`; set `CLIENT_URL` to the public frontend origin. `FRONTEND_PORT` and the same optional retry, worker, dispatcher, queue, and shutdown settings documented above can also be supplied through the shell or an untracked root `.env` file. Never commit that file or put credentials in Compose/workflow definitions.
+
+After setting these values and logging in to GHCR if the packages are private, use:
+
+```sh
+docker compose -f docker-compose.prod.yml pull
+docker compose -f docker-compose.prod.yml up -d
+docker compose -f docker-compose.prod.yml logs -f api worker dispatcher
+```
+
+This milestone prepares CI and image publishing only. Selecting a hosting provider, configuring its secrets/networking, and deploying the images remain a separate next milestone.
+
 ## TaskFlow background jobs
 
 The API and worker run as separate processes. Configure `DATABASE_URL`, `JWT_SECRET`, and `REDIS_URL` in `server/.env` (copy `server/.env.example` and fill in local values). Start Redis separately; for local development, run `redis-server` and use `REDIS_URL=redis://localhost:6379`.
