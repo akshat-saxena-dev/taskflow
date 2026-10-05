@@ -11,7 +11,7 @@ const startServer = async () => {
   if (dbStatus.connected) writeLog('api', 'info', 'postgres_connected');
   else writeLog('api', 'warn', 'postgres_not_connected', { message: dbStatus.message });
 
-  const server = app.listen(config.port, () => writeLog('api', 'info', 'server_listening', { port: config.port }));
+  const server = app.listen(config.port, "0.0.0.0", () => writeLog('api', 'info', 'server_listening', { port: config.port }));
   let closePromise: Promise<void> | undefined;
   const closeServer = () => closePromise ??= new Promise<void>((resolve, reject) => {
     server.close((error) => error ? reject(error) : resolve());
