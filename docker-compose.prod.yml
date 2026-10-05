@@ -28,6 +28,9 @@ x-server-environment: &server-environment
 services:
   frontend:
     image: ${GHCR_IMAGE_PREFIX:?Set GHCR_IMAGE_PREFIX to ghcr.io/owner/repository}-frontend:${TASKFLOW_IMAGE_TAG:-latest}
+    environment:
+      PORT: "8080"
+      API_UPSTREAM: http://api:5000
     ports:
       - "${FRONTEND_PORT:-80}:8080"
     depends_on:
